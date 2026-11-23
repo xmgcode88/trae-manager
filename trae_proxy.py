@@ -11328,6 +11328,25 @@ class Handler(BaseHTTPRequestHandler):
                 "stream": False,
             }
             t0 = time.time()
+            # SOLO 组的模型（glm-5.3 / kimi-k3 / deepseek-v4.x 等）在 IDE
+            # raw_chat 上返回 4023 model unknown；测试必须走它们真实的 SOLO 通道，
+            # 否则面板会给出与 /v1/chat/completions 相反的结论。
+            if test_model in SOLO_AGENT_MODELS or _solo_agent_only_key(test_model):
+                try:
+                    solo = trae_solo_chat(account, dict(test_payload))
+                except Exception as exc:
+                    return self._json(200, {"ok": False, "uid": account.uid,
+                                            "model": test_model,
+                                            "error": str(exc)[:300],
+                                            "elapsed_ms": int((time.time() - t0) * 1000)})
+                reply_text = (solo.get("content") or solo.get("reasoning") or "OK").strip()
+                if len(reply_text) > 80:
+                    reply_text = reply_text[:77] + "..."
+                account.clear_error()
+                return self._json(200, {"ok": True, "uid": account.uid,
+                                        "model": test_model,
+                                        "elapsed_ms": int((time.time() - t0) * 1000),
+                                        "reply": reply_text})
             try:
                 resp, acc, _ = open_upstream(test_payload, target_realm=acc_realm(account))
                 with resp:

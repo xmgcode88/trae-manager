@@ -2829,12 +2829,66 @@ def build_export_document(accounts, realm=None, include_secrets=True, uids=None)
     }
 
 
+def _row_from_chuanye_doc(doc):
+    """chuanye-account v1 导出 -> 导入行。
+
+    这类文件把凭据包在 oauth 里（token/refreshToken/uid/host/userRegion），
+    设备身份单独放 identity，顶层没有 token，原逻辑会判成“不是账号文档”。
+    """
+    import base64
+    import json as _json
+
+    oauth = doc.get("oauth") if isinstance(doc.get("oauth"), dict) else {}
+    ident = doc.get("identity") if isinstance(doc.get("identity"), dict) else {}
+    token = str(oauth.get("token") or oauth.get("accessToken") or "").strip()
+    refresh = str(oauth.get("refreshToken") or oauth.get("refresh_token") or "").strip()
+    host = str(oauth.get("host") or ident.get("host") or "").strip()
+    region = str(oauth.get("userRegion") or oauth.get("user_region") or "").strip()
+    realm = "cn" if ("trae.com.cn" in host or region.upper() == "CN") else "intl"
+    expired = oauth.get("expiredAt") or oauth.get("expired_at")
+    if not expired and token.count(".") == 2:
+        try:
+            part = token.split(".")[1]
+            part += "=" * (-len(part) % 4)
+            expired = _json.loads(base64.urlsafe_b64decode(part.encode()).decode()).get("exp")
+        except Exception:
+            expired = None
+    extra = {}
+    for key, value in (
+        ("device_id", ident.get("deviceId") or oauth.get("deviceId")),
+        ("machine_id", ident.get("machineId") or oauth.get("machineId")),
+        ("install_id", ident.get("installId")),
+        ("cdid", ident.get("cdid")),
+        ("pc_uuid", ident.get("pcUuid")),
+    ):
+        if value:
+            extra[key] = str(value)
+    extra["import_source"] = "chuanye-account"
+    return {
+        "uid": str(oauth.get("uid") or doc.get("uid") or ""),
+        "realm": realm,
+        "token": token,
+        "refresh_token": refresh,
+        "expired_at": expired,
+        "host": host,
+        "user_region": {"region": region or ("CN" if realm == "cn" else "US")},
+        "account": {
+            "name": oauth.get("name") or doc.get("name") or "",
+            "avatar": oauth.get("avatar") or "",
+        },
+        "extra": extra,
+        "source": "chuanye",
+    }
+
+
 def _coerce_account_rows(blob):
     """把任意受支持的容器规整成账号 dict 列表。返回 (rows, error)。"""
     if isinstance(blob, list):
         rows = blob
     elif isinstance(blob, dict) and isinstance(blob.get("accounts"), list):
         rows = blob["accounts"]
+    elif isinstance(blob, dict) and isinstance(blob.get("oauth"), dict):
+        rows = [_row_from_chuanye_doc(blob)]
     elif isinstance(blob, dict):
         looks_like_account = (blob.get("token") or blob.get("accessToken")
                               or blob.get("refreshToken")
