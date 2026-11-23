@@ -1,25 +1,28 @@
-# Trae 账号池部署包（trae2api-hub + 本地补丁）
+# trae-manager · Trae 账号池部署包
 
-把 Trae CN 账号池做成可复刻的部署单元：换任何一台服务器，跑一条命令就能重建同样的服务。
+把 Trae CN 账号池（trae2api-hub）做成**可复刻的部署单元**：换任何一台服务器，跑一条命令就能重建同样的服务。
 
-## 为什么需要这个包
+本仓库只放「部署脚本 + 补丁 + 文档」，**不镜像上游源码**——上游代码在部署时按锁定的 commit 拉取，所以永远不会和自己的修改冲突。
 
-上游 `shuishuipingan/trae2api-hub` 没有我们需要的两个能力，我们在服务器上直接改了源码：
+## 为什么需要这个仓库
+
+上游 `shuishuipingan/trae2api-hub` 缺少两个我们需要的能力，改动是在服务器上直接改源码实现的：
 
 1. **支持 `chuanye-account` 格式的账号 JSON 导入**（token 包在 `oauth` 里、设备身份在 `identity` 里）
 2. **面板「账号测试」对新模型走 SOLO 通道**（否则测 `GLM-5.3` 这类模型必报 `4023`，与真实调用结论相反）
 
-改动只存在于那台机器的文件里，`git pull` 就会被覆盖、换服务器就完全丢失。所以把它固化成 `patches/*.patch`，部署时自动打上。
+这类改动如果只留在服务器文件里，一次 `git pull` 就被覆盖、换台机器就完全丢失。所以固化成 `patches/*.patch`，部署时自动应用。
 
 ## 一条命令部署
 
 ```bash
 # 目标服务器需有：docker、git、curl
-scp -r deploy/trae-hub root@新服务器:/opt/
-ssh root@新服务器
-cd /opt/trae-hub
+git clone https://github.com/xmgcode88/trae-manager.git /opt/trae-manager
+cd /opt/trae-manager
 PANEL_PASSWORD='换成强密码' ./deploy.sh
 ```
+
+不想用 git 也行，把本仓库拷过去（`scp -r`）同样能跑。
 
 脚本做的事：拉上游源码（**锁定 commit**）→ 打补丁（幂等）→ 构建镜像 → 起容器 → 健康检查 → 打印面板地址、API 地址和自动生成的 API Key。
 
@@ -56,15 +59,35 @@ REF=origin/main ./deploy.sh      # 或指定新的 commit
 - 上游已合并同样的能力 → 删掉对应补丁；
 - 上游改了相关代码 → 手动在 `APP_DIR` 里重做改动，`git diff > patches/000X-xxx.patch` 更新补丁。
 
-## 代码怎么长期管理（三种方式，按需要选）
+## 代码怎么长期管理（三种方式）
 
 | 方式 | 做法 | 适合 |
 |---|---|---|
-| **A. 部署包（当前）** | 本目录进你自己的 git 仓库，补丁跟着版本走 | 少量服务器、只自己用（推荐先这样） |
-| **B. 自建 fork** | fork 上游，把补丁提交成一个分支，部署直接 `git clone` 你的 fork | 服务器多、要 CI 自动构建镜像 |
-| **C. 提 PR** | 把补丁整理后提给上游作者 | 想少维护，但要等作者接受 |
+| **A. 部署包（当前采用）** | 本仓库保存补丁与脚本，上游源码按 commit 现拉 | 少量服务器、自己维护 |
+| **B. 自建 fork** | fork 上游，把补丁提交成 `patch` 分支，部署直接 clone 你的 fork | 服务器多、想配 CI 自动出镜像 |
+| **C. 提 PR** | 把补丁整理后提给上游作者 | 想彻底不维护 |
 
-方式 A 与 B 可以叠加：先用 A 跑通，等服务器多了再转 B。
+A 与 B 可叠加：先用 A，服务器多了转 B。
+
+## 维护改动（最常见的操作）
+
+改动内容都在 `patches/` 里，更新流程：
+
+```bash
+# 1. 在部署好的机器上直接改源码（APP_DIR，默认 /opt/trae-hub）
+vim /opt/trae-hub/trae_proxy.py
+
+# 2. 导出新补丁（增量）
+cd /opt/trae-hub && git diff -- trae_proxy.py > /tmp/new.patch
+
+# 3. 回到本仓库，替换/追加补丁后提交
+#    多个补丁按文件名顺序应用，注意编号
+git add patches && git commit -m "fix: xxx" && git push
+
+# 4. 其它服务器重跑 ./deploy.sh 即同步（幂等）
+```
+
+改补丁最省事的做法：**每次只保留一个「全量补丁」**（`git diff` 不带参数，覆盖全部改动），避免多个补丁互相干扰。
 
 ## 常见问题
 
