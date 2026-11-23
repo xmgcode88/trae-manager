@@ -1,0 +1,11 @@
+# 账号凭据与用量流水（含 token，等同密码，绝不入库）
+accounts/
+usage/
+
+# 备份包
+*.tar.gz
+*.tgz
+
+# 本地环境
+.env
+*.log
